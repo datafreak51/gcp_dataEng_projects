@@ -7,7 +7,7 @@ Project Summary: **Cricket Stats ETL**
       * Retrieved data as JSON format.
     2. Transform:
       * Parsed the JSON.
-      * Extracted `name`, `country`, `rating` (removed `rank` on your request).
+      * Extracted `name`, `country`, `rating`.
       * Saved data as CSV.
     3. Load:
      * Uploaded the CSV to **Google Cloud Storage (GCS)**.
