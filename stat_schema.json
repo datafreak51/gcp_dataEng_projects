@@ -1,0 +1,16 @@
+{
+    "BigQuery Schema": [
+        {
+            "name": "Name",
+            "type": "STRING"
+        },
+        {
+            "name": "Country",
+            "type": "STRING"
+        },
+        {
+            "name": "Rating",
+            "type": "INTEGER"
+        }
+    ]
+}
