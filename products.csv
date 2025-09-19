@@ -1,0 +1,7 @@
+product_id,sku,name,category,price,cost,active_flag,launch_date
+P1001,SKU-IPH-13, iPhone 13 ,Mobile Phones,₹69,990,₹50,000,Y,2021/09/24
+P1002,SKU-CSE-PL, Phone Case ,Accessories,$12.99,$4.50,y,24-09-2021
+P1003,SKU-PRT-01,Printer,Peripherals,199.99,120.00,Y,09-24-2021
+P1004,SKU-PRT-01,Printer,Peripherals,199.99,120.00,N,2020-01-15
+P1005,SKU-HP-15,HP 15s Laptop,Laptops,₹54,990,₹42,000,Y,2022/10/10
+P1006,SKU-USB-32,USB Drive 32GB,accessory,699INR,300INR,Y,2022/02/02

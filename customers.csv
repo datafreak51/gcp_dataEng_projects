@@ -1,0 +1,7 @@
+customer_id,name,email,phone,signup_date,country,marketing_opt_in,lat,lon,address
+C001,  harsha   ,harsha@@example.com,+91-90000 11111,2024/12/31,IN,Y,17.3850,78.4867,"#12, St no 5 , Hyderabad"
+C002,Harini,harini@example.com,9000011112,31-12-2024,IN,,17.4400,78.4950,"Apt 402, "Megha", Hyderabad"
+C003,deepanjal,deepanjal.example.com,(040)999991234,12-31-2024,IN,N,,,"302, Downtown, Pune"
+C003,Deepanjal,deepanjal@example.com,9999912345,2025-01-02,IN,Y,18.5204,73.8567,"302, Downtown, Pune"
+C004,RAVI,ravi@example.com,1-800-222-3333,2025/01/05,US,y,37.7749,-122.4194,"Mission St, San Francisco"
+C005,nikitha   ,nikitha@example,70000-12345,05-01-2025,IN,N,17.3850,78.4867,"Secunderabad"

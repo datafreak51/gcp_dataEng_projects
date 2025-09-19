@@ -1,0 +1,228 @@
+
+```
+gcp_de_project/
+  raw/
+    customers.csv
+    products.csv
+    sales_2025_01.csv
+    store_lookup.csv
+    events.jsonl
+    bad_rows.csv                 
+    product_price_updates_2025_01.csv
+  scripts/
+    dataproc_transform.py        
+  README_MANUAL.txt
+```
+
+---
+
+ Why each component 
+
+Cloud Storage (GCS)= your data lake. Cheap, durable storage for raw files. We’ll keep `raw/` and write curated Parquet to `curated/`.
+Dataproc (PySpark)= your compute/ETL engine. Spin up a cluster, run PySpark to:
+
+  fix bad data (emails, dates, prices, phone numbers),
+  handle multi-format timestamps, nulls,
+  dedupe with window functions,
+  join, explode JSON arrays, pivot, apply business rules,
+  write clean Parquet back to GCS.
+BigQuery (BQ)= your analytics warehouse. We’ll load the curated Parquetand query it. No heavy transforms here (by design) — you said “Dataproc gets the exposure”.
+
+---
+
+ Manual project: end-to-end steps
+
+> Region picks below use asia-south1 (Mumbai). Adjust if you prefer.
+
+ 0) One-time setup
+
+1. Auth & project
+
+```bash
+gcloud init
+gcloud config set project YOUR_PROJECT_ID
+```
+
+2. Enable APIs
+
+```bash
+gcloud services enable compute.googleapis.com \
+    dataproc.googleapis.com \
+    bigquery.googleapis.com \
+    storage.googleapis.com
+```
+
+3. Create a regional bucket
+
+```bash
+gsutil mb -l asia-south1 gs://YOUR_BUCKET
+```
+
+Bucket tips: globally unique name, only lowercase, digits, hyphens.
+
+4. (Optional but recommended) Minimal IAM
+
+The VM service account (Compute Engine default or a custom one used by Dataproc) needs:
+
+  `roles/storage.objectAdmin` on the bucket (read/write GCS objects)
+  `roles/bigquery.dataOwner` on your target dataset (or `bigquery.admin` for simplicity in dev)
+  `roles/dataproc.editor` (or `dataproc.admin`) to run jobs
+
+For a quick start, you can use the default Compute Engine service account that Dataproc uses (okay for dev, not prod).
+
+---
+
+1) Put the raw data + script in GCS
+
+1. Unzip the file you downloaded.
+2. Upload everything to your bucket (mirrors the same folders):
+
+```bash
+ From the parent folder that contains gcp_de_project/
+gsutil -m rsync -r gcp_de_project gs://YOUR_BUCKET
+```
+
+You should now have:
+
+```
+gs://YOUR_BUCKET/raw/...
+gs://YOUR_BUCKET/scripts/dataproc_transform.py
+```
+
+---
+
+2) Create a Dataproc cluster (single-node for demo)
+
+```bash
+gcloud dataproc clusters create demo-dp \
+  --region=asia-south1 \
+  --single-node \
+  --image-version=2.2-debian12
+```
+
+Notes:
+
+single-nodekeeps cost/complexity low while you learn.
+Image 2.2 has Spark 3.x; good for PySpark + BigQuery connector.
+You can delete/recreate clusters as needed (see Cleanup later).
+
+---
+
+3) Run the PySpark job on Dataproc
+
+The job I wrote is inside `scripts/dataproc_transform.py`. It covers common real-world transformations:
+
+Customers:trim/standardize names, validate basic emails, normalize phones, parse dates in mixed formats, dedupe on `customer_id` by latest signup date.
+Products:strip currency symbols/commas (₹, \$, INR), convert to numeric, normalize categories (Accessory vs Accessories), compute margin, apply delta price updates(keep latest effective date).
+Sales:parse mixed timestampswith time zones (IST, -0500, Z), filter cancelled/refunded, fix negatives, compute discounts (NEWYEAR10, DISC5), dedupe per `(txn_id,line_id)`.
+Stores:normalize states (TS→Telangana, CA→California), dedupe duplicate `store_id`.
+Events:explodenested JSON arrays, then pivotevent counts (views/add\_to\_cart/purchase).
+Windows:build KPI table with lifetime spend & last purchase per customer.
+Outputs:write Parquetto `curated/` for `dim_customers`, `dim_products`, `fact_sales` (partitioned by category), and `customer_360`.
+
+Submit the job:
+
+```bash
+gcloud dataproc jobs submit pyspark \
+  --cluster=demo-dp \
+  --region=asia-south1 \
+  --jars=gs://spark-lib/bigquery/spark-bigquery-latest_2.12.jar \
+  gs://YOUR_BUCKET/scripts/dataproc_transform.py \
+  -- \
+  --raw gs://YOUR_BUCKET/raw \
+  --out gs://YOUR_BUCKET/curated
+```
+
+> Why that JAR? It’s the Spark–BigQuery connector. We’re not writing directly to BigQuery in this manual flow, but the connector availability is useful if you want to try the direct write path later.
+
+Check output folders:
+
+```bash
+gsutil ls gs://YOUR_BUCKET/curated/
+```
+
+You should see:
+
+```
+curated/dim_customers/
+curated/dim_products/
+curated/fact_sales/
+curated/customer_360/
+```
+
+---
+
+4) Load curated Parquet into BigQuery
+
+Create a dataset (if not present):
+
+```bash
+bq --location=asia-south1 mk demo_curated
+```
+
+Load each table (schema autodetect from Parquet):
+
+```bash
+bq load --autodetect --replace --source_format=PARQUET demo_curated.dim_customers  gs://YOUR_BUCKET/curated/dim_customers/
+bq load --autodetect --replace --source_format=PARQUET demo_curated.dim_products  gs://YOUR_BUCKET/curated/dim_products/
+bq load --autodetect --replace --source_format=PARQUET demo_curated.fact_sales    gs://YOUR_BUCKET/curated/fact_sales/
+bq load --autodetect --replace --source_format=PARQUET demo_curated.customer_360 gs://YOUR_BUCKET/curated/customer_360/
+```
+
+> Why load from GCS instead of writing directly from Spark?
+> Two reasons:
+>
+> 1. You clearly separate compute (Dataproc)from warehouse (BigQuery).
+> 2. Debugging is simpler: you can inspect Parquet in GCS before loading.
+
+---
+
+5) Run a few sanity queries in BigQuery
+
+Top 5 categories by revenue
+
+```sql
+SELECT category, ROUND(SUM(net_amount),2) AS revenue
+FROM `YOUR_PROJECT_ID.demo_curated.fact_sales`
+GROUP BY category
+ORDER BY revenue DESC
+LIMIT 5;
+```
+
+Customer 360 check
+
+```sql
+SELECT 
+FROM `YOUR_PROJECT_ID.demo_curated.customer_360`
+ORDER BY lifetime_value DESC
+LIMIT 20;
+```
+
+Email data quality
+
+```sql
+SELECT email_is_valid, COUNT() AS customers
+FROM `YOUR_PROJECT_ID.demo_curated.dim_customers`
+GROUP BY email_is_valid;
+```
+
+---
+
+What you just learned (and why it matters)
+
+Schema chaos: multiple date/timestamp formats, mixed currencies, junk emails/phones → fixed with PySpark UDFs/regexp & `coalesce`.
+Dedup logic: `row_number()` windows to keep the “latest right” record.
+Nested JSON: `explode` arrays, then `pivot` → very common in clickstream/event pipelines.
+Delta/upserts: price update feed applied using window‐by `sku` to keep latest effective.
+File formats: Parquetout of Spark gives you columnar compression + fast BQ load.
+Separation of concerns: GCS to stage, Dataproc to transform, BQ to analyze.
+
+---
+
+Common pitfalls (so you don’t trip)
+
+Bucket/region mismatch: keep Dataproc cluster and GCS bucket in the same region(asia-south1 here) to avoid cross-region latency and egress.
+Permissions: if the job can’t read/write GCS or BQ, fix the service account roles(storage object admin, BQ data owner).
+Connector missing: if you choose direct Spark→BQ writes later, make sure the BigQuery connector jaris available (I passed it via `--jars`).
+Timezone: I set Spark session TZ to UTCto avoid “IST vs UTC” math headaches. Convert to local only when presenting data.
+
